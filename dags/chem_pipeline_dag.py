@@ -14,51 +14,56 @@ CONN = os.environ.get("AWS_CONN_ID", "aws_default")
 
 
 @dag(
-    dag_id="chem_pipeline_v1",
-    schedule=None,
+    dag_id="chem_pipeline_v2",
+    schedule="@weekly",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     catchup=False,
-    params={"dataset_id": Param("", type="string",
-                                description="Dataset id to process")},
+    max_active_tasks=4,
+    params={"overwrite": Param(False, type="boolean",
+                               description="Reprocess datasets even if output exists")},
     tags=["cheminformatics"],
 )
 def chem_pipeline():
 
     @task
-    def load(**ctx):
-        did = ctx["params"]["dataset_id"]
-        if not did:
-            raise ValueError("dataset_id parameter is required")
-        sk, rk = s3.input_keys(did, IN_PREFIX)
+    def discover(**ctx):
+        overwrite = ctx["params"]["overwrite"]
+        since = ctx["data_interval_start"]
+        ids = s3.list_dataset_ids(BUCKET, IN_PREFIX, CONN,
+                                  modified_after=None if overwrite else since)
+        if overwrite:
+            return ids
+        todo = []
+        for i in ids:
+            done = s3.key_exists(BUCKET, s3.output_key(i, OUT_PREFIX, "clusters"), CONN)
+            if not done:
+                todo.append(i)
+        return todo
+
+    @task
+    def process(dataset_id, **ctx):
+        import pandas as pd
+        overwrite = ctx["params"]["overwrite"]
+        clusters_key = s3.output_key(dataset_id, OUT_PREFIX, "clusters")
+        if not overwrite and s3.key_exists(BUCKET, clusters_key, CONN):
+            return f"{dataset_id}: skipped (exists)"
+
+        sk, rk = s3.input_keys(dataset_id, IN_PREFIX)
         scaf = s3.read_csv_from_s3(BUCKET, sk, CONN)["smiles"].dropna().tolist()
         rg = s3.read_csv_from_s3(BUCKET, rk, CONN)["smiles"].dropna().tolist()
-        return {"dataset_id": did, "scaffolds": scaf, "r_groups": rg}
 
-    @task
-    def generate(payload):
-        mols = generate_molecules(payload["scaffolds"], payload["r_groups"])
-        return {"dataset_id": payload["dataset_id"], "molecules": mols}
+        mols = generate_molecules(scaf, rg)
 
-    @task
-    def properties(payload):
-        df = calc_properties_frame(payload["molecules"])
-        s3.write_csv_to_s3(df, BUCKET,
-                           s3.output_key(payload["dataset_id"], OUT_PREFIX, "properties"),
-                           CONN)
-        return payload
+        props = calc_properties_frame(mols)
+        s3.write_csv_to_s3(props, BUCKET,
+                           s3.output_key(dataset_id, OUT_PREFIX, "properties"), CONN)
 
-    @task
-    def clusters(payload):
-        import pandas as pd
-        mapping = cluster_molecules(payload["molecules"])
-        df = pd.DataFrame([{"smiles": k, "cluster": v} for k, v in mapping.items()])
-        s3.write_csv_to_s3(df, BUCKET,
-                           s3.output_key(payload["dataset_id"], OUT_PREFIX, "clusters"),
-                           CONN)
-        return payload["dataset_id"]
+        mapping = cluster_molecules(mols)
+        clus = pd.DataFrame([{"smiles": k, "cluster": v} for k, v in mapping.items()])
+        s3.write_csv_to_s3(clus, BUCKET, clusters_key, CONN)
+        return f"{dataset_id}: {len(mols)} molecules"
 
-    p = generate(load())
-    properties(p) >> clusters(p)
+    process.expand(dataset_id=discover())
 
 
 chem_pipeline()
