@@ -1,0 +1,39 @@
+version: "3.8"
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3-python3.11
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    PYTHONPATH: /opt/airflow/src
+    _PIP_ADDITIONAL_REQUIREMENTS: rdkit==2024.3.5 scikit-learn==1.5.1 pandas==2.2.2 apache-airflow-providers-amazon==8.25.0
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./logs:/opt/airflow/logs
+  depends_on: [postgres]
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+  airflow-init:
+    <<: *airflow-common
+    command: bash -c "airflow db migrate && airflow users create --username admin --password admin --firstname a --lastname a --role Admin --email a@a.com"
+
+  webserver:
+    <<: *airflow-common
+    command: webserver
+    ports: ["8080:8080"]
+
+  scheduler:
+    <<: *airflow-common
+    command: scheduler
+
+volumes:
+  pgdata:
