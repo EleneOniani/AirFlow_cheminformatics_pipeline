@@ -36,6 +36,16 @@ Manual run with reprocess:
 { "overwrite": true }
 ```
 
+## Step 3 — data quality + MS Teams alerts
+Each dataset is validated before and after generation:
+- **Input**: `smiles` column present, non-empty file, no nulls, valid RDKit SMILES
+- **Output**: at least one molecule generated
+
+Results are posted to a Teams channel via an incoming webhook
+(`TEAMS_WEBHOOK_URL`): green card on success (with molecule count), red card on
+failure (with the reason). A failed dataset raises and is marked failed in Airflow
+without blocking the other mapped datasets.
+
 ## Local dev
 ```bash
 cp .env.example .env       # fill values
