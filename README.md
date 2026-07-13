@@ -22,6 +22,19 @@ DAG `chem_pipeline_v1`. Trigger with config:
 ```json
 { "dataset_id": "batch01" }
 ```
+## Step 2 — weekly, incremental
+DAG `chem_pipeline_v2` runs `@weekly` and processes every dataset that is new
+since the last run (based on the run's `data_interval_start` and whether output
+already exists). Datasets are processed in parallel via dynamic task mapping.
+
+### `overwrite` param (default `False`)
+- `False`: only unprocessed datasets are handled; existing outputs are kept.
+- `True`: all discovered datasets are (re)processed and outputs overwritten.
+
+Manual run with reprocess:
+```json
+{ "overwrite": true }
+```
 
 ## Local dev
 ```bash
